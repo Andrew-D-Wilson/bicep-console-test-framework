@@ -161,6 +161,44 @@ $result | Should -Be $expected
 
 ---
 
+## ConvertTo-BicepConsoleResult
+
+Instead of hand-crafting multi-line escape sequences, use `ConvertTo-BicepConsoleResult` to
+build the expected string from plain PowerShell data. It accepts any of: `$null`, `[bool]`,
+numeric types, `[string]`, `[ordered]@{}`, `[pscustomobject]`, or a PS array — and returns
+the string that `Invoke-BicepExpression` would return for an equivalent Bicep value.
+
+```powershell
+# Object — use [ordered]@{} to preserve key order
+$result   = Invoke-BicepExpression -b $imports -e "newCoreParams('uksouth','uks','dev','myapp')"
+$expected = ConvertTo-BicepConsoleResult ([ordered]@{
+    location          = 'uksouth'
+    locationShortName = 'uks'
+    environment       = 'dev'
+    projectPrefix     = 'myapp'
+})
+$result | Should -Be $expected
+
+# Array
+$expected = ConvertTo-BicepConsoleResult @('alpha', 'beta', 'gamma')
+# returns "[`n  'alpha'`n  'beta'`n  'gamma'`n]"
+
+# Scalar types work too
+ConvertTo-BicepConsoleResult $null   # 'null'
+ConvertTo-BicepConsoleResult $true   # 'true'
+ConvertTo-BicepConsoleResult 42      # '42'
+ConvertTo-BicepConsoleResult 'hello' # "'hello'"
+
+# Pipeline input is supported
+$expected = 'my-resource-name' | ConvertTo-BicepConsoleResult
+```
+
+> **Important:** Always use `[ordered]@{}` or `[pscustomobject]@{}` for objects.
+> An unordered `@{}` is rejected with a descriptive error because key order is
+> non-deterministic and would produce output that may not match the Bicep console.
+
+---
+
 ## PowerShell String Escaping
 
 Inside **double-quoted** PowerShell strings, `$` is interpreted by PowerShell before Bicep sees it.
@@ -289,6 +327,6 @@ It "should throw a helpful error when bicep CLI is not found" {
 - [ ] `$script:imports` declared in a `BeforeAll` scoped to the `Describe`/`Context` — not inside individual `It` blocks.
 - [ ] Import dependency files (types first, then functions that reference those types).
 - [ ] String assertions include the surrounding single quotes (e.g. `"'myvalue'"`).
-- [ ] Object assertions use `` `n `` for newlines and two-space indentation.
+- [ ] Object assertions use `ConvertTo-BicepConsoleResult` with `[ordered]@{}` rather than manual `` `n `` escape sequences where possible.
 - [ ] Dollar signs in Bicep interpolations inside PS double-quoted strings are backtick-escaped.
 - [ ] Deployment-time variables are either excluded from imports or tested with `Should -Throw`.
