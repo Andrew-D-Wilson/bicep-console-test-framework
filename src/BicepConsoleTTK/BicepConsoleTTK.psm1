@@ -343,7 +343,7 @@ function Format-BicepValue {
     # unordered hashtable — reject; key order is not guaranteed and would produce
     # non-deterministic output that may not match the Bicep console result
     if ($Value -is [hashtable]) {
-        throw "ConvertTo-BicepConsoleResult: Unordered [hashtable] detected. Use [ordered]@{} or [pscustomobject]@{} to preserve property order, which is required to match Bicep console output."
+        throw "BicepConsoleTTK: Unordered [hashtable] detected. Use [ordered]@{} or [pscustomobject]@{} to preserve property order, which is required to match Bicep console output."
     }
 
     # [ordered]@{} — System.Collections.Specialized.OrderedDictionary
@@ -393,7 +393,7 @@ function Format-BicepValue {
         return $sb.ToString()
     }
 
-    throw "ConvertTo-BicepConsoleResult: Unsupported type '$($Value.GetType().FullName)'. Supported input types: null, bool, numeric, string, [ordered]@{}, [pscustomobject], array."
+    throw "BicepConsoleTTK: Unsupported type '$($Value.GetType().FullName)'. Supported input types: null, bool, numeric, string, [ordered]@{}, [pscustomobject], array."
 }
 
 function ConvertTo-BicepConsoleResult {
@@ -424,6 +424,71 @@ function ConvertTo-BicepConsoleResult {
     .EXAMPLE
         # Pipeline input is supported
         $expected = 'my-value' | ConvertTo-BicepConsoleResult   # returns "'my-value'"
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [AllowNull()]
+        $Value
+    )
+
+    process {
+        return Format-BicepValue -Value $Value -Depth 0
+    }
+}
+
+function ConvertTo-BicepLiteral {
+    <#
+    .SYNOPSIS
+        Converts a PowerShell value to a Bicep literal expression string.
+
+    .DESCRIPTION
+        Transforms a PowerShell null, bool, number, string, ordered hashtable, PSCustomObject,
+        or array into the Bicep literal string for that value — exactly the value portion that
+        appears after the = in a Bicep declaration. Use it inside a PowerShell subexpression
+        when building setup declarations for Invoke-BicepExpression, so complex typed values
+        can be written as structured PowerShell data rather than hand-crafted single-line strings.
+
+        The output format is identical to ConvertTo-BicepConsoleResult (multi-line, indented).
+        Both functions share the private Format-BicepValue helper. The Bicep console tolerates
+        multi-line setup declarations because it waits for braces to balance before evaluating.
+
+        Objects must be passed as [ordered]@{} or [pscustomobject]@{} — regular [hashtable]
+        inputs (unordered @{}) are rejected because their non-deterministic key order would
+        produce output that cannot reliably match the Bicep console.
+
+    .EXAMPLE
+        $setup = @(
+            "var op apiOperationDefinition = `$(ConvertTo-BicepLiteral ([ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{ name = 'customerId'; type = 'string'; required = `$true }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{ name = 'includeOrders'; type = 'bool'; required = `$false }
+                        )
+                        headers = @(
+                            [ordered]@{ name = 'x-correlation-id'; type = 'string'; required = `$false; values = @('abc', 'def') }
+                        )
+                    }
+                    responses = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            }))"
+        )
+        Invoke-BicepExpression -BicepImports `$imports -SetupDeclarations `$setup -Expression "op"
+
+    .EXAMPLE
+        # Pipeline input is supported
+        $literal = 'my-value' | ConvertTo-BicepLiteral   # returns "'my-value'"
     #>
     [CmdletBinding()]
     param(
