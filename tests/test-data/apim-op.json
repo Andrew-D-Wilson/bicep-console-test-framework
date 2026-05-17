@@ -1,0 +1,37 @@
+{
+  "name": "get-customer",
+  "properties": {
+    "displayName": "Get Customer",
+    "method": "GET",
+    "urlTemplate": "/customers/{customerId}",
+    "description": "Retrieves a customer by ID",
+    "templateParameters": [
+      {
+        "name": "customerId",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "request": {
+      "queryParameters": [
+        {
+          "name": "includeOrders",
+          "type": "bool",
+          "required": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-correlation-id",
+          "type": "string",
+          "required": false,
+          "values": [ "abc", "def" ]
+        }
+      ]
+    },
+    "responses": [
+      { "statusCode": 200 },
+      { "statusCode": 404 }
+    ]
+  }
+}

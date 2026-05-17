@@ -437,6 +437,59 @@ function ConvertTo-BicepConsoleResult {
     }
 }
 
+function Read-BicepLiteral {
+    <#
+    .SYNOPSIS
+        Reads a JSON file and returns the Bicep literal expression string for its content.
+
+    .DESCRIPTION
+        Loads a JSON file from the specified path, deserialises it with ConvertFrom-Json
+        (which preserves JSON key order as a PSCustomObject on all supported PowerShell
+        versions), then passes it through the same Format-BicepValue private helper used by
+        ConvertTo-BicepLiteral. The result is the Bicep literal string for the file's content
+        — exactly the value portion that appears after = in a Bicep declaration.
+
+        Use it inside a PowerShell subexpression when building SetupDeclarations so large
+        or shared fixture objects can be stored in a separate JSON file rather than inlined
+        in the test:
+
+            `$setup = @(
+                "var op apiOperationDefinition = `$(Read-BicepLiteral '`$PSScriptRoot/test-data/apim-op.json')"
+            )
+
+        The -Path parameter is resolved relative to the caller's current location.
+        A clear 'Read-BicepLiteral: File not found' error is thrown when the file is missing,
+        consistent with the error style of Import-Bicep.
+
+    .EXAMPLE
+        `$setup = @(
+            "var op apiOperationDefinition = `$(Read-BicepLiteral '`$PSScriptRoot/test-data/apim-op.json')"
+        )
+        Invoke-BicepExpression -BicepImports `$imports -SetupDeclarations `$setup -Expression "op"
+
+    .EXAMPLE
+        # Simple scalar JSON: file content is just a JSON string
+        # apim-name.json: "get-customer"
+        `$literal = Read-BicepLiteral '`$PSScriptRoot/test-data/apim-name.json'
+        # returns "'get-customer'"
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    process {
+        $resolved = Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue
+        if (-not $resolved) {
+            throw "Read-BicepLiteral: File not found: $Path"
+        }
+        $content = Get-Content -Path $resolved -Raw -Encoding UTF8
+        $data    = $content | ConvertFrom-Json
+        return Format-BicepValue -Value $data -Depth 0
+    }
+}
+
 function ConvertTo-BicepLiteral {
     <#
     .SYNOPSIS

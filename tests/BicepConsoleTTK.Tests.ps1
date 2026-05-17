@@ -615,4 +615,122 @@ Describe "BicepConsoleTTK" {
             $actual | Should -Be $expected
         }
     }
+
+    Context "Read-BicepLiteral" {
+
+        BeforeAll {
+            $script:readLiteralApimImports = Import-Bicep "import {apiOperationDefinition} from '$PSScriptRoot/../examples/Types.bicep'"
+        }
+
+        It "should throw a clear error when the file does not exist" {
+
+            { Read-BicepLiteral "$PSScriptRoot/test-data/nonexistent.json" } | Should -Throw "*Read-BicepLiteral: File not found*"
+        }
+
+        It "should convert a simple JSON string to a Bicep string literal" {
+
+            # Write a minimal one-shot JSON string file, compare to ConvertTo-BicepLiteral
+            $tempFile = [System.IO.Path]::GetTempFileName() + '.json'
+            try {
+                '"hello-world"' | Set-Content -Path $tempFile -Encoding UTF8 -NoNewline
+                $result = Read-BicepLiteral $tempFile
+                $result | Should -Be (ConvertTo-BicepLiteral 'hello-world')
+            } finally {
+                Remove-Item -Path $tempFile -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "should convert a JSON object file to a Bicep object literal matching ConvertTo-BicepConsoleResult" {
+
+            $result   = Read-BicepLiteral "$PSScriptRoot/test-data/apim-op.json"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{
+                            name     = 'customerId'
+                            type     = 'string'
+                            required = $true
+                        }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{
+                                name     = 'includeOrders'
+                                type     = 'bool'
+                                required = $false
+                            }
+                        )
+                        headers         = @(
+                            [ordered]@{
+                                name     = 'x-correlation-id'
+                                type     = 'string'
+                                required = $false
+                                values   = @('abc', 'def')
+                            }
+                        )
+                    }
+                    responses          = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            })
+
+            $result | Should -Be $expected
+        }
+
+        It "should produce a literal from a JSON file usable as a typed APIM setup declaration (round-trip)" {
+
+            # This is the exact scenario from the feature request: the JSON fixture lives in a
+            # separate file; Read-BicepLiteral embeds it inline via a PS subexpression.
+            $setup  = @(
+                "var op apiOperationDefinition = $(Read-BicepLiteral "$PSScriptRoot/test-data/apim-op.json")"
+            )
+            $actual   = Invoke-BicepExpression -BicepImports $script:readLiteralApimImports -SetupDeclarations $setup -Expression "op"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{
+                            name     = 'customerId'
+                            type     = 'string'
+                            required = $true
+                        }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{
+                                name     = 'includeOrders'
+                                type     = 'bool'
+                                required = $false
+                            }
+                        )
+                        headers         = @(
+                            [ordered]@{
+                                name     = 'x-correlation-id'
+                                type     = 'string'
+                                required = $false
+                                values   = @('abc', 'def')
+                            }
+                        )
+                    }
+                    responses          = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            })
+
+            $actual | Should -Be $expected
+        }
+    }
 }
