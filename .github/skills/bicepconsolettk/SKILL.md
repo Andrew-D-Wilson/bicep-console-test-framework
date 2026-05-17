@@ -192,6 +192,61 @@ $expected = 'my-resource-name' | ConvertTo-BicepConsoleResult
 
 ---
 
+## ConvertTo-BicepLiteral
+
+When building typed `SetupDeclarations` that reference complex values, use `ConvertTo-BicepLiteral`
+inside a PowerShell subexpression. It converts a PS value into the Bicep literal expression for
+that value — the portion that goes after `=` in a Bicep declaration.
+
+```powershell
+$setup = @(
+    "var op apiOperationDefinition = $(ConvertTo-BicepLiteral ([ordered]@{
+        name       = 'get-customer'
+        properties = [ordered]@{
+            displayName        = 'Get Customer'
+            method             = 'GET'
+            urlTemplate        = '/customers/{customerId}'
+            description        = 'Retrieves a customer by ID'
+            templateParameters = @(
+                [ordered]@{ name = 'customerId'; type = 'string'; required = `$true }
+            )
+            request            = [ordered]@{
+                queryParameters = @(
+                    [ordered]@{ name = 'includeOrders'; type = 'bool'; required = `$false }
+                )
+                headers = @(
+                    [ordered]@{ name = 'x-correlation-id'; type = 'string'; required = `$false; values = @('abc', 'def') }
+                )
+            }
+            responses = @(
+                [ordered]@{ statusCode = 200 }
+                [ordered]@{ statusCode = 404 }
+            )
+        }
+    }))"
+)
+$result = Invoke-BicepExpression -BicepImports $imports -SetupDeclarations $setup -Expression "op"
+```
+
+The output format is identical to `ConvertTo-BicepConsoleResult` (multi-line, indented). Both
+functions share the private `Format-BicepValue` helper. The Bicep console tolerates multi-line
+setup declarations because it waits for braces to balance before evaluating.
+
+Scalar and pipeline use matches `ConvertTo-BicepConsoleResult`:
+
+```powershell
+ConvertTo-BicepLiteral $null   # 'null'
+ConvertTo-BicepLiteral $true   # 'true'
+ConvertTo-BicepLiteral 42      # '42'
+ConvertTo-BicepLiteral 'hello' # "'hello'"
+$literal = 'my-value' | ConvertTo-BicepLiteral
+```
+
+> **Important:** Always use `[ordered]@{}` or `[pscustomobject]@{}` for objects.
+> An unordered `@{}` is rejected with a descriptive error.
+
+---
+
 ## PowerShell String Escaping
 
 Inside **double-quoted** PowerShell strings, `$` is interpreted by PowerShell before Bicep sees it.

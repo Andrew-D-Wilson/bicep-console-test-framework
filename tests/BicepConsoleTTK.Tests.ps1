@@ -452,4 +452,167 @@ Describe "BicepConsoleTTK" {
             $actual | Should -Be $expected
         }
     }
+
+    Context "ConvertTo-BicepLiteral" {
+
+        BeforeAll {
+            $script:literalConverterImports = Import-Bicep "import {coreParams, newCoreParams} from '$PSScriptRoot/../examples/Types.bicep'"
+            $script:literalApimImports      = Import-Bicep "import {apiOperationDefinition} from '$PSScriptRoot/../examples/Types.bicep'"
+        }
+
+        It "should produce the same output as ConvertTo-BicepConsoleResult for null" {
+
+            ConvertTo-BicepLiteral $null | Should -Be (ConvertTo-BicepConsoleResult $null)
+        }
+
+        It "should produce the same output as ConvertTo-BicepConsoleResult for bool true and false" {
+
+            ConvertTo-BicepLiteral $true  | Should -Be (ConvertTo-BicepConsoleResult $true)
+            ConvertTo-BicepLiteral $false | Should -Be (ConvertTo-BicepConsoleResult $false)
+        }
+
+        It "should produce the same output as ConvertTo-BicepConsoleResult for an integer" {
+
+            ConvertTo-BicepLiteral 99 | Should -Be (ConvertTo-BicepConsoleResult 99)
+        }
+
+        It "should produce the same output as ConvertTo-BicepConsoleResult for a string" {
+
+            ConvertTo-BicepLiteral 'hello' | Should -Be (ConvertTo-BicepConsoleResult 'hello')
+        }
+
+        It "should throw when given an unordered [hashtable]" {
+
+            { ConvertTo-BicepLiteral @{ key = 'value' } } | Should -Throw "*[ordered]*"
+        }
+
+        It "should accept pipeline input" {
+
+            $result = 'pipe-test' | ConvertTo-BicepLiteral
+
+            $result | Should -Be "'pipe-test'"
+        }
+
+        It "should produce a literal usable as a typed setup declaration (round-trip)" {
+
+            # Embed ConvertTo-BicepLiteral in the setup string via PS subexpression
+            $data   = [ordered]@{
+                location          = 'ukwest'
+                locationShortName = 'ukw'
+                environment       = 'dev'
+                projectPrefix     = 'myproject'
+            }
+            $setup  = @("var core coreParams = $(ConvertTo-BicepLiteral $data)")
+            $actual = Invoke-BicepExpression -BicepImports $script:literalConverterImports -SetupDeclarations $setup -Expression "core"
+
+            $expected = ConvertTo-BicepConsoleResult $data
+
+            $actual | Should -Be $expected
+        }
+
+        It "should produce output identical to ConvertTo-BicepConsoleResult for a deeply nested APIM-style object" {
+
+            $data = [ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{ name = 'customerId'; type = 'string'; required = $true }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{ name = 'includeOrders'; type = 'bool'; required = $false }
+                        )
+                        headers         = @(
+                            [ordered]@{ name = 'x-correlation-id'; type = 'string'; required = $false; values = @('abc', 'def') }
+                        )
+                    }
+                    responses          = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            }
+
+            ConvertTo-BicepLiteral $data | Should -Be (ConvertTo-BicepConsoleResult $data)
+        }
+
+        It "should produce a literal usable as a typed APIM setup declaration (feature-request round-trip)" {
+
+            # This is the exact scenario from the feature request: instead of hand-crafting a
+            # single-line Bicep string, embed ConvertTo-BicepLiteral in the setup declaration
+            # via a PS subexpression. The Bicep console tolerates the multi-line literal because
+            # it waits for braces to balance before evaluating.
+            $setup = @(
+                "var op apiOperationDefinition = $(ConvertTo-BicepLiteral ([ordered]@{
+                    name       = 'get-customer'
+                    properties = [ordered]@{
+                        displayName        = 'Get Customer'
+                        method             = 'GET'
+                        urlTemplate        = '/customers/{customerId}'
+                        description        = 'Retrieves a customer by ID'
+                        templateParameters = @(
+                            [ordered]@{ name = 'customerId'; type = 'string'; required = $true }
+                        )
+                        request            = [ordered]@{
+                            queryParameters = @(
+                                [ordered]@{ name = 'includeOrders'; type = 'bool'; required = $false }
+                            )
+                            headers = @(
+                                [ordered]@{ name = 'x-correlation-id'; type = 'string'; required = $false; values = @('abc', 'def') }
+                            )
+                        }
+                        responses = @(
+                            [ordered]@{ statusCode = 200 }
+                            [ordered]@{ statusCode = 404 }
+                        )
+                    }
+                }))"
+            )
+
+            $actual   = Invoke-BicepExpression -BicepImports $script:literalApimImports -SetupDeclarations $setup -Expression "op"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{
+                            name     = 'customerId'
+                            type     = 'string'
+                            required = $true
+                        }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{
+                                name     = 'includeOrders'
+                                type     = 'bool'
+                                required = $false
+                            }
+                        )
+                        headers         = @(
+                            [ordered]@{
+                                name     = 'x-correlation-id'
+                                type     = 'string'
+                                required = $false
+                                values   = @('abc', 'def')
+                            }
+                        )
+                    }
+                    responses          = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            })
+
+            $actual | Should -Be $expected
+        }
+    }
 }
