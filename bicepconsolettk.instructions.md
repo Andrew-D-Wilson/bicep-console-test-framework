@@ -254,6 +254,26 @@ $literal = 'my-value' | ConvertTo-BicepLiteral
 
 ---
 
+## Read-BicepLiteral
+
+For large or shared fixture objects, store the data as a JSON file and load it with
+`Read-BicepLiteral`. The JSON is deserialised with `ConvertFrom-Json` (preserves key order
+as a `[pscustomobject]` on both PS 5.1 and PS 7+) then passed through the same `Format-BicepValue`
+helper — output is identical to `ConvertTo-BicepLiteral`.
+
+```powershell
+# test-data/apim-op.json holds the fixture as standard JSON
+$setup = @(
+    "var op apiOperationDefinition = $(Read-BicepLiteral '$PSScriptRoot/test-data/apim-op.json')"
+)
+$result = Invoke-BicepExpression -BicepImports $imports -SetupDeclarations $setup -Expression 'op'
+```
+
+A clear `Read-BicepLiteral: File not found: <path>` error is thrown when the file is missing,
+consistent with the error style of `Import-Bicep`.
+
+---
+
 ## PowerShell String Escaping
 
 Inside **double-quoted** PowerShell strings, `$` is interpreted by PowerShell before Bicep sees it.

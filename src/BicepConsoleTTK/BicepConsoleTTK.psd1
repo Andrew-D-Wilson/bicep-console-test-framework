@@ -69,7 +69,7 @@ PowerShellVersion = '5.1'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'Import-Bicep', 'Invoke-BicepExpression', 'ConvertTo-BicepConsoleResult', 'ConvertTo-BicepLiteral'
+FunctionsToExport = 'Import-Bicep', 'Invoke-BicepExpression', 'ConvertTo-BicepConsoleResult', 'ConvertTo-BicepLiteral', 'Read-BicepLiteral'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -112,6 +112,7 @@ PrivateData = @{
 ### New Features
 - Added ConvertTo-BicepConsoleResult: converts a PowerShell null, bool, number, string, [ordered]@{}, [pscustomobject], or array to the exact string that Invoke-BicepExpression returns for an equivalent Bicep value, enabling clean Should -Be assertions without hand-crafting multi-line escape sequences
 - Added ConvertTo-BicepLiteral: converts a PowerShell value to a Bicep literal expression string (the value portion after =). Use it inside a PS subexpression when building SetupDeclarations so complex typed values can be written as structured PowerShell data rather than hand-crafted single-line strings. Shares the same Format-BicepValue private helper as ConvertTo-BicepConsoleResult — output format is identical
+- Added Read-BicepLiteral: reads a JSON file and returns the Bicep literal string for its content. Enables large or shared fixture objects to live in separate JSON files rather than inlined in tests. Uses ConvertFrom-Json (preserves JSON key order as PSCustomObject on PS 5.1 and PS 7+) then delegates to Format-BicepValue — same output as ConvertTo-BicepLiteral. Throws a clear Read-BicepLiteral: File not found error on a missing path, consistent with Import-Bicep error style
 
 ## 0.1.1 (2026-05-09)
 
