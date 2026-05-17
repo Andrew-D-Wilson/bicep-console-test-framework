@@ -261,4 +261,195 @@ Describe "BicepConsoleTTK" {
             $result | Should -Be "'https://uksouth.in.applicationinsights.azure.com/v2/track'"
         }
     }
+
+    Context "ConvertTo-BicepConsoleResult" {
+
+        BeforeAll {
+            $script:converterImports = Import-Bicep "import {coreParams, newCoreParams} from '$PSScriptRoot/../examples/Types.bicep'"
+            # apiOperationDefinition pulls in its *[]? element-type dependencies (queryParameter,
+            # templateParameter, header, response) automatically via Import-Bicep's dep resolution.
+            $script:apimImports = Import-Bicep "import {apiOperationDefinition} from '$PSScriptRoot/../examples/Types.bicep'"
+        }
+
+        It "should convert null to the string 'null'" {
+
+            $actual   = Invoke-BicepExpression -Expression "null"
+            $expected = ConvertTo-BicepConsoleResult -Value $null
+
+            $actual | Should -Be $expected
+        }
+
+        It "should convert [bool] true to the string 'true'" {
+
+            $actual   = Invoke-BicepExpression -Expression "true"
+            $expected = ConvertTo-BicepConsoleResult -Value $true
+
+            $actual | Should -Be $expected
+        }
+
+        It "should convert [bool] false to the string 'false'" {
+
+            $actual   = Invoke-BicepExpression -Expression "false"
+            $expected = ConvertTo-BicepConsoleResult -Value $false
+
+            $actual | Should -Be $expected
+        }
+
+        It "should convert an integer to its numeric string representation" {
+
+            $actual   = Invoke-BicepExpression -Expression "42"
+            $expected = ConvertTo-BicepConsoleResult -Value 42
+
+            $actual | Should -Be $expected
+        }
+
+        It "should wrap a string in single quotes" {
+
+            $actual   = Invoke-BicepExpression -Expression "'hello'"
+            $expected = ConvertTo-BicepConsoleResult -Value 'hello'
+
+            $actual | Should -Be $expected
+        }
+
+        It "should escape internal single quotes in a string by doubling them" {
+
+            # The Bicep console REPL parses 'it''s a test' as two separate expressions
+            # ('it' and 's a test'), so '' cannot be round-tripped through the console.
+            # This test verifies the PS-level escaping behaviour of ConvertTo-BicepConsoleResult directly.
+            $result = ConvertTo-BicepConsoleResult -Value "it's a test"
+
+            $result | Should -Be "'it''s a test'"
+        }
+
+        It "should convert an [ordered] hashtable to a newline-delimited object string" {
+
+            $actual = Invoke-BicepExpression -BicepImports $script:converterImports `
+                -Expression "newCoreParams('ukwest', 'ukw', 'dev', 'myproject')"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                location          = 'ukwest'
+                locationShortName = 'ukw'
+                environment       = 'dev'
+                projectPrefix     = 'myproject'
+            })
+
+            $actual | Should -Be $expected
+        }
+
+        It "should convert a [pscustomobject] to a newline-delimited object string" {
+
+            $actual = Invoke-BicepExpression -BicepImports $script:converterImports `
+                -Expression "newCoreParams('ukwest', 'ukw', 'dev', 'myproject')"
+            $expected = ConvertTo-BicepConsoleResult ([pscustomobject]@{
+                location          = 'ukwest'
+                locationShortName = 'ukw'
+                environment       = 'dev'
+                projectPrefix     = 'myproject'
+            })
+
+            $actual | Should -Be $expected
+        }
+
+        It "should throw when given an unordered [hashtable]" {
+
+            { ConvertTo-BicepConsoleResult -Value @{ key = 'value' } } | Should -Throw "*[ordered]*"
+        }
+
+        It "should convert a PS array to a newline-delimited array string" {
+
+            $actual   = Invoke-BicepExpression -Expression "['alpha', 'beta', 'gamma']"
+            $expected = ConvertTo-BicepConsoleResult -Value @('alpha', 'beta', 'gamma')
+
+            $actual | Should -Be $expected
+        }
+
+        It "should render nested objects with correct two-space indentation per depth level" {
+
+            $setup  = @("var obj = { outer: 'value', nested: { inner: 'deep' } }")
+            $actual = Invoke-BicepExpression -SetupDeclarations $setup -Expression "obj"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                outer  = 'value'
+                nested = [ordered]@{ inner = 'deep' }
+            })
+
+            $actual | Should -Be $expected
+        }
+
+        It "should accept pipeline input" {
+
+            $actual   = Invoke-BicepExpression -Expression "'pipeline-value'"
+            $expected = 'pipeline-value' | ConvertTo-BicepConsoleResult
+
+            $actual | Should -Be $expected
+        }
+
+        It "should produce output that matches the actual Bicep console result (round-trip)" {
+
+            $actual = Invoke-BicepExpression -BicepImports $script:converterImports `
+                -Expression "newCoreParams('ukwest', 'ukw', 'dev', 'myproject')"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                location          = 'ukwest'
+                locationShortName = 'ukw'
+                environment       = 'dev'
+                projectPrefix     = 'myproject'
+            })
+
+            $actual | Should -Be $expected
+        }
+
+        It "should handle a deeply nested APIM-style object with arrays of objects and a string array at multiple depth levels" {
+
+            # Depth map:
+            #  0  op (apiOperationDefinition)
+            #  1    name, properties
+            #  2      displayName/method/urlTemplate/description, templateParameters[], request, responses[]
+            #  3        templateParameters[0] object,  request.queryParameters[], request.headers[],  responses[0/1] object
+            #  4          templateParameter props,  queryParameters[0] object,  headers[0] object,  response props
+            #  5            queryParameter props,  header props including values[]
+            #  6              values[] items ('abc', 'def')
+            $setup = @(
+                "var op apiOperationDefinition = { name: 'get-customer', properties: { displayName: 'Get Customer', method: 'GET', urlTemplate: '/customers/{customerId}', description: 'Retrieves a customer by ID', templateParameters: [{ name: 'customerId', type: 'string', required: true }], request: { queryParameters: [{ name: 'includeOrders', type: 'bool', required: false }], headers: [{ name: 'x-correlation-id', type: 'string', required: false, values: ['abc', 'def'] }] }, responses: [{ statusCode: 200 }, { statusCode: 404 }] } }"
+            )
+
+            $actual   = Invoke-BicepExpression -BicepImports $script:apimImports -SetupDeclarations $setup -Expression "op"
+            $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+                name       = 'get-customer'
+                properties = [ordered]@{
+                    displayName        = 'Get Customer'
+                    method             = 'GET'
+                    urlTemplate        = '/customers/{customerId}'
+                    description        = 'Retrieves a customer by ID'
+                    templateParameters = @(
+                        [ordered]@{
+                            name     = 'customerId'
+                            type     = 'string'
+                            required = $true
+                        }
+                    )
+                    request            = [ordered]@{
+                        queryParameters = @(
+                            [ordered]@{
+                                name     = 'includeOrders'
+                                type     = 'bool'
+                                required = $false
+                            }
+                        )
+                        headers         = @(
+                            [ordered]@{
+                                name     = 'x-correlation-id'
+                                type     = 'string'
+                                required = $false
+                                values   = @('abc', 'def')
+                            }
+                        )
+                    }
+                    responses          = @(
+                        [ordered]@{ statusCode = 200 }
+                        [ordered]@{ statusCode = 404 }
+                    )
+                }
+            })
+
+            $actual | Should -Be $expected
+        }
+    }
 }

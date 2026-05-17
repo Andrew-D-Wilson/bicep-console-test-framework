@@ -309,3 +309,130 @@ function Invoke-BicepExpression {
         }
     }
 }
+
+# Private helper — not exported. Recurses through a PS value and renders it as the string
+# that the Bicep console would produce for an equivalent Bicep value.
+function Format-BicepValue {
+    param(
+        $Value,
+        [int]$Depth = 0
+    )
+
+    # null
+    if ($null -eq $Value) { return 'null' }
+
+    # bool — must be checked before numeric types
+    if ($Value -is [bool]) {
+        if ($Value) { return 'true' } else { return 'false' }
+    }
+
+    # numeric types
+    if ($Value -is [int]   -or $Value -is [long]   -or $Value -is [double] -or
+        $Value -is [float] -or $Value -is [decimal] -or $Value -is [byte]  -or
+        $Value -is [sbyte] -or $Value -is [int16]   -or $Value -is [uint16] -or
+        $Value -is [uint32] -or $Value -is [uint64]) {
+        return "$Value"
+    }
+
+    # string — wrap in single quotes; escape internal single quotes as ''
+    if ($Value -is [string]) {
+        $escaped = $Value -replace "'", "''"
+        return "'$escaped'"
+    }
+
+    # unordered hashtable — reject; key order is not guaranteed and would produce
+    # non-deterministic output that may not match the Bicep console result
+    if ($Value -is [hashtable]) {
+        throw "ConvertTo-BicepConsoleResult: Unordered [hashtable] detected. Use [ordered]@{} or [pscustomobject]@{} to preserve property order, which is required to match Bicep console output."
+    }
+
+    # [ordered]@{} — System.Collections.Specialized.OrderedDictionary
+    if ($Value -is [System.Collections.Specialized.OrderedDictionary]) {
+        if ($Value.Count -eq 0) { return '{}' }
+        $indent        = '  ' * ($Depth + 1)
+        $closingIndent = '  ' * $Depth
+        $sb = [System.Text.StringBuilder]::new()
+        [void]$sb.Append("{`n")
+        foreach ($key in $Value.Keys) {
+            $formattedVal = Format-BicepValue -Value $Value[$key] -Depth ($Depth + 1)
+            [void]$sb.Append("$indent${key}: $formattedVal`n")
+        }
+        [void]$sb.Append("$closingIndent}")
+        return $sb.ToString()
+    }
+
+    # [pscustomobject] — iterate NoteProperty members in declaration order
+    if ($Value -is [pscustomobject]) {
+        $props = @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })
+        if ($props.Count -eq 0) { return '{}' }
+        $indent        = '  ' * ($Depth + 1)
+        $closingIndent = '  ' * $Depth
+        $sb = [System.Text.StringBuilder]::new()
+        [void]$sb.Append("{`n")
+        foreach ($prop in $props) {
+            $formattedVal = Format-BicepValue -Value $prop.Value -Depth ($Depth + 1)
+            [void]$sb.Append("$indent$($prop.Name): $formattedVal`n")
+        }
+        [void]$sb.Append("$closingIndent}")
+        return $sb.ToString()
+    }
+
+    # array / any other IEnumerable (strings and dictionaries already handled above)
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @($Value)
+        if ($items.Count -eq 0) { return '[]' }
+        $indent        = '  ' * ($Depth + 1)
+        $closingIndent = '  ' * $Depth
+        $sb = [System.Text.StringBuilder]::new()
+        [void]$sb.Append("[`n")
+        foreach ($item in $items) {
+            $formattedItem = Format-BicepValue -Value $item -Depth ($Depth + 1)
+            [void]$sb.Append("$indent$formattedItem`n")
+        }
+        [void]$sb.Append("$closingIndent]")
+        return $sb.ToString()
+    }
+
+    throw "ConvertTo-BicepConsoleResult: Unsupported type '$($Value.GetType().FullName)'. Supported input types: null, bool, numeric, string, [ordered]@{}, [pscustomobject], array."
+}
+
+function ConvertTo-BicepConsoleResult {
+    <#
+    .SYNOPSIS
+        Converts a PowerShell value to the string format returned by the Bicep console REPL.
+
+    .DESCRIPTION
+        Transforms a PowerShell null, bool, number, string, ordered hashtable, PSCustomObject,
+        or array into the exact string that Invoke-BicepExpression returns for an equivalent
+        Bicep value. Use the result directly in a Pester Should -Be assertion instead of
+        hand-crafting multi-line escape sequences.
+
+        Objects must be passed as [ordered]@{} or [pscustomobject]@{} — regular [hashtable]
+        inputs (unordered @{}) are rejected because their non-deterministic key order would
+        produce output that may not match the Bicep console.
+
+    .EXAMPLE
+        $result   = Invoke-BicepExpression -b $imports -e "newCoreParams('uksouth','uks','dev','myapp')"
+        $expected = ConvertTo-BicepConsoleResult ([ordered]@{
+            location          = 'uksouth'
+            locationShortName = 'uks'
+            environment       = 'dev'
+            projectPrefix     = 'myapp'
+        })
+        $result | Should -Be $expected
+
+    .EXAMPLE
+        # Pipeline input is supported
+        $expected = 'my-value' | ConvertTo-BicepConsoleResult   # returns "'my-value'"
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [AllowNull()]
+        $Value
+    )
+
+    process {
+        return Format-BicepValue -Value $Value -Depth 0
+    }
+}
