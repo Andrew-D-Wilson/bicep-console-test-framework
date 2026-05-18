@@ -12,6 +12,9 @@ The module exposes two commands:
 |---|---|
 | `Import-Bicep` | Reads one or more Bicep files and extracts the declarations you specify, returning them as a collated string ready to feed into the console. |
 | `Invoke-BicepExpression` | Starts the Bicep console, writes the imported declarations and your expression to its stdin, captures stdout, and returns the evaluated result. |
+| `ConvertTo-BicepConsoleResult` | Converts a PowerShell value (null, bool, number, string, `[ordered]@{}`, `[pscustomobject]`, array) to the exact string that `Invoke-BicepExpression` would return, enabling clean `Should -Be` assertions. |
+| `ConvertTo-BicepLiteral` | Converts a PowerShell value to a Bicep literal expression string (the value portion after `=`). Use it inside a PS subexpression when building typed setup declarations so complex values can be written as structured PowerShell data rather than hand-crafted single-line strings. |
+| `Read-BicepLiteral` | Reads a JSON file and returns the Bicep literal expression string for its content. Enables large or shared fixture objects to live in separate JSON files rather than inlined in tests. |
 
 ## Features
 
@@ -21,6 +24,9 @@ The module exposes two commands:
 - **Setup declarations** — pre-declare intermediate variables in the console before the final expression, enabling multi-step test scenarios.
 - **Pipeline input** — import strings can be piped into `Import-Bicep`.
 - **Clear error messages** — Bicep console errors are caught, the tilde/caret noise stripped, and re-thrown as readable exceptions.
+- **Structured result conversion** — `ConvertTo-BicepConsoleResult` converts PS objects and arrays to the Bicep console string format, so assertions read as plain data rather than escaped multi-line strings.
+- **Structured setup declarations** — `ConvertTo-BicepLiteral` converts a PS value to a Bicep literal expression string, so complex typed setup declarations can be written as readable structured PowerShell data instead of hand-crafted single-line strings.
+- **JSON fixtures** — `Read-BicepLiteral` reads a JSON file and returns the Bicep literal for its content, so large or shared fixture objects can live in separate files rather than inlined in tests.
 - **CI/CD ready** — no interactive prompts; works in any headless PowerShell environment.
 
 ## Prerequisites
@@ -108,6 +114,99 @@ $setupDeclarations = @(
 
 $result = Invoke-BicepExpression -b $imports -s $setupDeclarations -e "basicResource('aks', coreParameters)"
 ```
+
+### Asserting on structured results
+
+When a Bicep expression returns an object or array, `Invoke-BicepExpression` returns a
+newline-delimited string. Rather than hand-crafting that string in your tests, use
+`ConvertTo-BicepConsoleResult` to build the expected value from a plain PowerShell object:
+
+```powershell
+$result = Invoke-BicepExpression -b $imports -e "newCoreParams('uksouth', 'uks', 'dev', 'myapp')"
+
+$expected = ConvertTo-BicepConsoleResult ([ordered]@{
+    location          = 'uksouth'
+    locationShortName = 'uks'
+    environment       = 'dev'
+    projectPrefix     = 'myapp'
+})
+
+$result | Should -Be $expected
+```
+
+For arrays, pass a regular PS array:
+
+```powershell
+$expected = ConvertTo-BicepConsoleResult @('alpha', 'beta', 'gamma')
+# returns "[`n  'alpha'`n  'beta'`n  'gamma'`n]"
+```
+
+> **Note:** Objects must be expressed as `[ordered]@{}` or `[pscustomobject]@{}` — regular
+> unordered `@{}` are rejected with a descriptive error because their non-deterministic key
+> order would produce output that cannot reliably match the Bicep console.
+
+### ConvertTo-BicepLiteral
+
+When building typed setup declarations that reference complex values, use `ConvertTo-BicepLiteral`
+inside a PowerShell subexpression. It returns the Bicep literal expression for a value — the
+portion that goes after `=` — so structured PS data replaces error-prone single-line strings:
+
+```powershell
+$setup = @(
+    "var op apiOperationDefinition = $(ConvertTo-BicepLiteral ([ordered]@{
+        name       = 'get-customer'
+        properties = [ordered]@{
+            displayName        = 'Get Customer'
+            method             = 'GET'
+            urlTemplate        = '/customers/{customerId}'
+            description        = 'Retrieves a customer by ID'
+            templateParameters = @(
+                [ordered]@{ name = 'customerId'; type = 'string'; required = `$true }
+            )
+            request            = [ordered]@{
+                queryParameters = @(
+                    [ordered]@{ name = 'includeOrders'; type = 'bool'; required = `$false }
+                )
+                headers = @(
+                    [ordered]@{ name = 'x-correlation-id'; type = 'string'; required = `$false; values = @('abc', 'def') }
+                )
+            }
+            responses = @(
+                [ordered]@{ statusCode = 200 }
+                [ordered]@{ statusCode = 404 }
+            )
+        }
+    }))"
+)
+$result = Invoke-BicepExpression -BicepImports $imports -SetupDeclarations $setup -Expression "op"
+```
+
+The function returns the same multi-line, indented format as `ConvertTo-BicepConsoleResult`
+(both share the private `Format-BicepValue` helper). The Bicep console tolerates multi-line
+setup declarations because it waits for braces to balance before evaluating.
+
+> **Note:** The same `[ordered]@{}` / `[pscustomobject]@{}` requirement applies — unordered
+> `@{}` is rejected with a descriptive error.
+
+### Read-BicepLiteral
+
+For large or shared fixture objects, store the data as a JSON file and use `Read-BicepLiteral`
+to load it directly into a setup declaration:
+
+```powershell
+# test-data/apim-op.json holds the object as standard JSON
+$setup = @(
+    "var op apiOperationDefinition = $(Read-BicepLiteral '$PSScriptRoot/test-data/apim-op.json')"
+)
+$result = Invoke-BicepExpression -BicepImports $imports -SetupDeclarations $setup -Expression 'op'
+```
+
+The JSON is deserialised with `ConvertFrom-Json` (which preserves key order as a
+`[pscustomobject]` on both PS 5.1 and PS 7+), then passed through the same `Format-BicepValue`
+helper as `ConvertTo-BicepLiteral`. The output format is identical.
+
+A clear `Read-BicepLiteral: File not found: <path>` error is thrown for a missing file,
+consistent with the error style of `Import-Bicep`.
 
 ### Example Pester test file
 
